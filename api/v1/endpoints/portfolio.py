@@ -7,8 +7,9 @@ import logging
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
+from api.deps import get_optional_user_id
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.portfolio import (
     PortfolioAccountCreateRequest,
@@ -83,15 +84,19 @@ def _serialize_import_record(item: dict) -> PortfolioImportTradeItem:
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Create portfolio account",
 )
-def create_account(request: PortfolioAccountCreateRequest) -> PortfolioAccountItem:
+def create_account(
+    request: PortfolioAccountCreateRequest,
+    user_id: Optional[int] = Depends(get_optional_user_id),
+) -> PortfolioAccountItem:
     service = PortfolioService()
     try:
+        owner_id = request.owner_id if request.owner_id is not None else user_id
         row = service.create_account(
             name=request.name,
             broker=request.broker,
             market=request.market,
             base_currency=request.base_currency,
-            owner_id=request.owner_id,
+            owner_id=owner_id,
         )
         return PortfolioAccountItem(**row)
     except ValueError as exc:
@@ -108,10 +113,12 @@ def create_account(request: PortfolioAccountCreateRequest) -> PortfolioAccountIt
 )
 def list_accounts(
     include_inactive: bool = Query(False, description="Whether to include inactive accounts"),
+    user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> PortfolioAccountListResponse:
     service = PortfolioService()
     try:
-        rows = service.list_accounts(include_inactive=include_inactive)
+        owner_id = str(user_id) if user_id is not None else None
+        rows = service.list_accounts(include_inactive=include_inactive, owner_id=owner_id)
         return PortfolioAccountListResponse(accounts=[PortfolioAccountItem(**item) for item in rows])
     except Exception as exc:
         raise _internal_error("List accounts failed", exc)

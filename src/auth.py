@@ -66,6 +66,236 @@ def _get_credential_path() -> Path:
     return _get_data_dir() / ".admin_password_hash"
 
 
+def _get_user_db_session():
+    """Get a database session for user operations. Returns None if DB not available."""
+    try:
+        from src.storage import DatabaseManager
+        return DatabaseManager.get_instance().get_session()
+    except Exception:
+        return None
+
+
+def _has_users_table() -> bool:
+    """Check if the users table exists and has at least one row."""
+    session = _get_user_db_session()
+    if session is None:
+        return False
+    try:
+        from src.storage import User
+        count = session.query(User.id).count()
+        return count > 0
+    except Exception:
+        return False
+    finally:
+        session.close()
+
+
+def _is_multi_user_mode() -> bool:
+    """Return True when users table exists with at least one user."""
+    return _has_users_table()
+
+
+def create_user(
+    username: str,
+    password: str,
+    display_name: str | None = None,
+    is_admin: bool = False,
+) -> tuple[object | None, str | None]:
+    """Create a new user. Returns (user, error_message)."""
+    from src.storage import User
+
+    username = (username or "").strip()
+    if not username:
+        return None, "用户名不能为空"
+    if len(username) < 2:
+        return None, "用户名至少2个字符"
+    if len(password) < MIN_PASSWORD_LEN:
+        return None, f"密码至少 {MIN_PASSWORD_LEN} 位"
+
+    session = _get_user_db_session()
+    if session is None:
+        return None, "数据库不可用"
+
+    try:
+        import base64
+
+        existing = session.query(User).filter(User.username == username).first()
+        if existing:
+            return None, "用户名已存在"
+
+        salt = secrets.token_bytes(32)
+        derived = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt=salt,
+            iterations=PBKDF2_ITERATIONS,
+        )
+        salt_b64 = base64.standard_b64encode(salt).decode("ascii")
+        hash_b64 = base64.standard_b64encode(derived).decode("ascii")
+
+        user = User(
+            username=username,
+            password_hash=f"{salt_b64}:{hash_b64}",
+            display_name=display_name or username,
+            is_admin=is_admin,
+            is_active=True,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user, None
+    except Exception as e:
+        session.rollback()
+        logger.error("Failed to create user: %s", e)
+        return None, "创建用户失败"
+    finally:
+        session.close()
+
+
+def authenticate_user(username: str, password: str):
+    """Verify username and password. Returns User on success, None on failure."""
+    from src.storage import User
+
+    username = (username or "").strip()
+    if not username or not password:
+        return None
+
+    session = _get_user_db_session()
+    if session is None:
+        return None
+
+    try:
+        user = session.query(User).filter(User.username == username).first()
+        if user is None or not user.is_active:
+            return None
+
+        parsed = _parse_password_hash(user.password_hash)
+        if parsed is None:
+            return None
+        salt, stored_hash = parsed
+        if _verify_password_hash(password, salt, stored_hash):
+            return user
+        return None
+    except Exception as e:
+        logger.error("authenticate_user failed: %s", e)
+        return None
+    finally:
+        session.close()
+
+
+def get_user_by_id(user_id: int):
+    """Get user by ID. Returns User or None."""
+    from src.storage import User
+
+    session = _get_user_db_session()
+    if session is None:
+        return None
+    try:
+        return session.query(User).filter(User.id == user_id).first()
+    except Exception:
+        return None
+    finally:
+        session.close()
+
+
+def get_user_by_username(username: str):
+    """Get user by username. Returns User or None."""
+    from src.storage import User
+
+    session = _get_user_db_session()
+    if session is None:
+        return None
+    try:
+        return session.query(User).filter(User.username == username).first()
+    except Exception:
+        return None
+    finally:
+        session.close()
+
+
+def list_users():
+    """List all active users."""
+    from src.storage import User
+
+    session = _get_user_db_session()
+    if session is None:
+        return []
+    try:
+        return session.query(User).filter(User.is_active == True).order_by(User.id).all()
+    except Exception:
+        return []
+    finally:
+        session.close()
+
+
+def update_user_password(user_id: int, current_password: str, new_password: str) -> str | None:
+    """Change password for a specific user. Returns None on success, error message on failure."""
+    import base64
+
+    from src.storage import User
+
+    if len(new_password) < MIN_PASSWORD_LEN:
+        return f"密码至少 {MIN_PASSWORD_LEN} 位"
+
+    session = _get_user_db_session()
+    if session is None:
+        return "数据库不可用"
+
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if user is None:
+            return "用户不存在"
+
+        parsed = _parse_password_hash(user.password_hash)
+        if parsed is None:
+            return "密码数据异常"
+
+        salt, stored_hash = parsed
+        if not _verify_password_hash(current_password, salt, stored_hash):
+            return "当前密码错误"
+
+        new_salt = secrets.token_bytes(32)
+        new_derived = hashlib.pbkdf2_hmac(
+            "sha256",
+            new_password.encode("utf-8"),
+            salt=new_salt,
+            iterations=PBKDF2_ITERATIONS,
+        )
+        salt_b64 = base64.standard_b64encode(new_salt).decode("ascii")
+        hash_b64 = base64.standard_b64encode(new_derived).decode("ascii")
+        user.password_hash = f"{salt_b64}:{hash_b64}"
+        session.commit()
+        return None
+    except Exception as e:
+        session.rollback()
+        logger.error("update_user_password failed: %s", e)
+        return "修改密码失败"
+    finally:
+        session.close()
+
+
+def deactivate_user(user_id: int) -> bool:
+    """Deactivate a user. Returns True on success."""
+    from src.storage import User
+
+    session = _get_user_db_session()
+    if session is None:
+        return False
+    try:
+        user = session.query(User).filter(User.id == user_id).first()
+        if user is None:
+            return False
+        user.is_active = False
+        session.commit()
+        return True
+    except Exception as e:
+        session.rollback()
+        logger.error("deactivate_user failed: %s", e)
+        return False
+    finally:
+        session.close()
+
+
 def _is_auth_enabled_from_env() -> bool:
     """Read ADMIN_AUTH_ENABLED from .env file."""
     _ensure_env_loaded()
@@ -216,9 +446,11 @@ def verify_stored_password(password: str) -> bool:
 
 
 def is_password_set() -> bool:
-    """Return whether initial password has been set (credential file exists and valid)."""
+    """Return whether at least one user exists (multi-user) or password file exists (legacy)."""
     if not is_auth_enabled():
         return False
+    if _is_multi_user_mode():
+        return True
     return has_stored_password()
 
 
@@ -279,19 +511,31 @@ def set_initial_password(password: str) -> Optional[str]:
         return "密码保存失败"
 
 
-def verify_password(password: str) -> bool:
-    """Verify password against stored credential. Constant-time where applicable."""
+def verify_password(password: str, username: str | None = None) -> bool:
+    """Verify password. When username is given, authenticates against user DB. Otherwise tries legacy admin check."""
     if not is_auth_enabled():
         return True
+    if username:
+        return authenticate_user(username, password) is not None
+    if _is_multi_user_mode():
+        # In multi-user mode, legacy verify_password without username is only for the auth toggle check
+        # which should use session verification instead
+        return False
     return verify_stored_password(password)
 
 
-def change_password(current: str, new: str) -> Optional[str]:
+def change_password(current: str, new: str, user_id: int | None = None) -> Optional[str]:
     """
-    Change password. Verifies current, writes new hash. Returns error message or None on success.
+    Change password. In multi-user mode, user_id is required.
+    Returns error message or None on success.
     """
     if not is_auth_enabled():
         return "认证功能未启用"
+
+    if user_id is not None:
+        return update_user_password(user_id, current, new)
+
+    # Legacy single-admin flow
     if not is_password_set():
         return "尚未设置密码"
 
@@ -321,7 +565,6 @@ def change_password(current: str, new: str) -> Optional[str]:
         tmp_path.write_text(content)
         tmp_path.chmod(0o600)
         tmp_path.replace(cred_path)
-        # Reload into memory so subsequent verify_password uses new hash
         _load_credential_from_file()
         return None
     except OSError as e:
@@ -329,42 +572,52 @@ def change_password(current: str, new: str) -> Optional[str]:
         return "密码保存失败"
 
 
-def create_session() -> str:
-    """Create a signed session payload. Format: nonce.ts.signature."""
+def create_session(user_id: int | None = None) -> str:
+    """Create a signed session payload. Format: nonce.ts.signature or nonce.user_id.ts.signature."""
     secret = _get_session_secret()
     if not secret:
         return ""
     nonce = secrets.token_urlsafe(32)
     ts = str(int(time.time()))
-    payload = f"{nonce}.{ts}"
+    uid_str = str(user_id) if user_id is not None else ""
+    payload = f"{nonce}.{uid_str}.{ts}"
     sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"{payload}.{sig}"
 
 
-def verify_session(value: str) -> bool:
-    """Verify session cookie and check expiry."""
+def verify_session(value: str):
+    """Verify session cookie and check expiry. Returns user_id (int) or None."""
     secret = _get_session_secret()
     if not secret or not value:
-        return False
+        return None
     parts = value.split(".")
-    if len(parts) != 3:
-        return False
-    nonce, ts_str, sig = parts[0], parts[1], parts[2]
-    payload = f"{nonce}.{ts_str}"
+    if len(parts) not in (3, 4):
+        return None
+    if len(parts) == 3:
+        nonce, ts_str, sig = parts[0], parts[1], parts[2]
+        uid_str = ""
+    else:
+        nonce, uid_str, ts_str, sig = parts[0], parts[1], parts[2], parts[3]
+    payload = f"{nonce}.{uid_str}.{ts_str}"
     expected = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
-        return False
+        return None
     try:
         ts = int(ts_str)
     except ValueError:
-        return False
+        return None
     try:
         max_age_hours = int(os.getenv("ADMIN_SESSION_MAX_AGE_HOURS", str(SESSION_MAX_AGE_HOURS_DEFAULT)))
     except ValueError:
         max_age_hours = SESSION_MAX_AGE_HOURS_DEFAULT
     if time.time() - ts > max_age_hours * 3600:
-        return False
-    return True
+        return None
+    if uid_str:
+        try:
+            return int(uid_str)
+        except ValueError:
+            return None
+    return None
 
 
 def get_client_ip(request) -> str:

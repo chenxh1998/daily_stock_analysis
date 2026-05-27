@@ -10,13 +10,14 @@ API 依赖注入模块
 3. 提供服务层依赖
 """
 
-from typing import Generator
+from typing import Generator, Optional
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 
 from src.storage import DatabaseManager
 from src.config import get_config, Config
+from src.auth import is_auth_enabled
 from src.services.system_config_service import SystemConfigService
 
 
@@ -69,3 +70,21 @@ def get_system_config_service(request: Request) -> SystemConfigService:
         service = SystemConfigService()
         request.app.state.system_config_service = service
     return service
+
+
+def get_current_user_id(request: Request) -> int:
+    """Get current user_id from request state (set by AuthMiddleware). Raises 401 if not authenticated."""
+    user_id = getattr(request.state, "user_id", None)
+    if user_id is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "unauthorized", "message": "Login required"},
+        )
+    return user_id
+
+
+def get_optional_user_id(request: Request) -> Optional[int]:
+    """Get current user_id, or None when auth is disabled or not set."""
+    if not is_auth_enabled():
+        return None
+    return getattr(request.state, "user_id", None)

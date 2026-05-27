@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from api.deps import get_database_manager
+from api.deps import get_database_manager, get_optional_user_id
 from api.v1.schemas.backtest import (
     BacktestRunRequest,
     BacktestRunResponse,
@@ -53,6 +53,7 @@ def _validate_analysis_date_range(
 def run_backtest(
     request: BacktestRunRequest,
     db_manager: DatabaseManager = Depends(get_database_manager),
+    user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> BacktestRunResponse:
     try:
         service = BacktestService(db_manager)
@@ -90,6 +91,7 @@ def get_backtest_results(
     page: int = Query(1, ge=1, description="页码"),
     limit: int = Query(20, ge=1, le=200, description="每页数量"),
     db_manager: DatabaseManager = Depends(get_database_manager),
+    user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> BacktestResultsResponse:
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
@@ -101,6 +103,7 @@ def get_backtest_results(
             page=page,
             analysis_date_from=analysis_date_from,
             analysis_date_to=analysis_date_to,
+            user_id=user_id,
         )
         items = [BacktestResultItem(**item) for item in data.get("items", [])]
         return BacktestResultsResponse(
@@ -134,6 +137,7 @@ def get_overall_performance(
     analysis_date_from: Optional[date] = Query(None, description="分析日期起始（含）"),
     analysis_date_to: Optional[date] = Query(None, description="分析日期结束（含）"),
     db_manager: DatabaseManager = Depends(get_database_manager),
+    user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> PerformanceMetrics:
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)
@@ -182,6 +186,7 @@ def get_stock_performance(
     analysis_date_from: Optional[date] = Query(None, description="分析日期起始（含）"),
     analysis_date_to: Optional[date] = Query(None, description="分析日期结束（含）"),
     db_manager: DatabaseManager = Depends(get_database_manager),
+    user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> PerformanceMetrics:
     try:
         _validate_analysis_date_range(analysis_date_from, analysis_date_to)

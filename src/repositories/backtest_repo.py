@@ -111,6 +111,7 @@ class BacktestRepository:
         days: Optional[int],
         offset: int,
         limit: int,
+        user_id: Optional[int] = None,
     ) -> Tuple[List[Tuple[BacktestResult, Optional[str], Optional[str], Optional[datetime]]], int]:
         with self.db.get_session() as session:
             conditions = self._build_result_conditions(
@@ -121,6 +122,8 @@ class BacktestRepository:
                 analysis_date_to=analysis_date_to,
                 days=days,
             )
+            if user_id is not None:
+                conditions.append(AnalysisHistory.user_id == user_id)
 
             where_clause = and_(*conditions) if conditions else True
 

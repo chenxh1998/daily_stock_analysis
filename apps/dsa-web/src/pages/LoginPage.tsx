@@ -22,6 +22,7 @@ const LoginPage: React.FC = () => {
   const redirect =
     rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/';
 
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -51,13 +52,19 @@ const LoginPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    if (!username.trim()) {
+      setError('请输入用户名');
+      return;
+    }
+
     if (isFirstTime && password !== passwordConfirm) {
       setError('两次输入的密码不一致');
       return;
     }
     setIsSubmitting(true);
     try {
-      const result = await login(password, isFirstTime ? passwordConfirm : undefined);
+      const result = await login(username.trim(), password, isFirstTime ? passwordConfirm : undefined);
       if (result.success) {
         navigate(redirect, { replace: true });
       } else {
@@ -124,7 +131,7 @@ const LoginPage: React.FC = () => {
             </h3>
           </div>
 
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.3 }}
@@ -154,24 +161,38 @@ const LoginPage: React.FC = () => {
                 {isFirstTime ? (
                   <>
                     <ShieldCheck className="h-6 w-6 text-emerald-400" />
-                    <span>设置初始密码</span>
+                    <span>创建管理员账户</span>
                   </>
                 ) : (
                   <>
                     <Lock className="h-5 w-5 text-[var(--login-accent-text)]" />
-                    <span>管理员登录</span>
+                    <span>用户登录</span>
                   </>
                 )}
               </h1>
               <p className="mt-2 text-sm text-[var(--login-text-secondary)]">
                 {isFirstTime
-                  ? '首次启用认证，请为系统工作台设置管理员密码。'
-                  : '访问 DSA 量化决策引擎需要有效的身份凭证。'}
+                  ? '首次启用认证，请创建管理员账户。'
+                  : '访问 DSA 量化决策引擎需要有效的用户凭证。'}
               </p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="space-y-4">
+                <Input
+                  id="username"
+                  type="text"
+                  appearance="login"
+                  iconType="user"
+                  label="用户名"
+                  placeholder="请输入用户名"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  disabled={isSubmitting}
+                  autoFocus
+                  autoComplete="username"
+                />
+
                 <Input
                   id="password"
                   type="password"
@@ -183,7 +204,6 @@ const LoginPage: React.FC = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isSubmitting}
-                  autoFocus
                   autoComplete={isFirstTime ? 'new-password' : 'current-password'}
                 />
 
@@ -211,7 +231,7 @@ const LoginPage: React.FC = () => {
                   className="overflow-hidden"
                 >
                   <SettingsAlert
-                    title={isFirstTime ? '配置失败' : '验证未通过'}
+                    title={isFirstTime ? '创建失败' : '验证未通过'}
                     message={isParsedApiError(error) ? error.message : error}
                     variant="error"
                     className="!border-[var(--login-error-border)] !bg-[var(--login-error-bg)] !text-[var(--login-error-text)]"
@@ -230,10 +250,10 @@ const LoginPage: React.FC = () => {
                   {isSubmitting ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>{isFirstTime ? '初始化中...' : '正在建立连接...'}</span>
+                      <span>{isFirstTime ? '创建中...' : '正在建立连接...'}</span>
                     </>
                   ) : (
-                    <span>{isFirstTime ? '完成设置并登录' : '授权进入工作台'}</span>
+                    <span>{isFirstTime ? '创建管理员账户并登录' : '授权进入工作台'}</span>
                   )}
                 </div>
                 <div className="absolute inset-0 z-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite] pointer-events-none" />
@@ -243,7 +263,7 @@ const LoginPage: React.FC = () => {
         </motion.div>
 
         {/* Footer info */}
-        <motion.p 
+        <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.6 }}

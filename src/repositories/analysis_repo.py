@@ -55,16 +55,18 @@ class AnalysisRepository:
         self,
         code: Optional[str] = None,
         days: int = 30,
-        limit: int = 50
+        limit: int = 50,
+        user_id: Optional[int] = None,
     ) -> List[AnalysisHistory]:
         """
         获取分析记录列表
-        
+
         Args:
             code: 股票代码筛选
             days: 时间范围（天）
             limit: 返回数量限制
-            
+            user_id: 用户 ID 筛选
+
         Returns:
             AnalysisHistory 对象列表
         """
@@ -72,7 +74,8 @@ class AnalysisRepository:
             return self.db.get_analysis_history(
                 code=code,
                 days=days,
-                limit=limit
+                limit=limit,
+                user_id=user_id,
             )
         except Exception as e:
             logger.error(f"获取分析列表失败: {e}")
@@ -84,18 +87,20 @@ class AnalysisRepository:
         query_id: str,
         report_type: str,
         news_content: Optional[str] = None,
-        context_snapshot: Optional[Dict[str, Any]] = None
+        context_snapshot: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None,
     ) -> int:
         """
         保存分析结果
-        
+
         Args:
             result: 分析结果对象
             query_id: 查询 ID
             report_type: 报告类型
             news_content: 新闻内容
             context_snapshot: 上下文快照
-            
+            user_id: 用户 ID
+
         Returns:
             保存的记录数
         """
@@ -105,7 +110,8 @@ class AnalysisRepository:
                 query_id=query_id,
                 report_type=report_type,
                 news_content=news_content,
-                context_snapshot=context_snapshot
+                context_snapshot=context_snapshot,
+                user_id=user_id,
             )
         except Exception as e:
             logger.error(f"保存分析结果失败: {e}")

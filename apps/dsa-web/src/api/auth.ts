@@ -3,9 +3,26 @@ import apiClient from './index';
 export type AuthStatusResponse = {
   authEnabled: boolean;
   loggedIn: boolean;
+  userId?: number | null;
+  username?: string | null;
+  displayName?: string | null;
+  isAdmin?: boolean;
   passwordSet?: boolean;
   passwordChangeable?: boolean;
   setupState: 'enabled' | 'password_retained' | 'no_password';
+};
+
+export type UserItem = {
+  id: number;
+  username: string;
+  displayName: string | null;
+  isAdmin: boolean;
+  isActive: boolean;
+  createdAt: string | null;
+};
+
+export type UsersListResponse = {
+  users: UserItem[];
 };
 
 export const authApi = {
@@ -39,12 +56,23 @@ export const authApi = {
     return data;
   },
 
-  async login(password: string, passwordConfirm?: string): Promise<void> {
-    const body: { password: string; passwordConfirm?: string } = { password };
+  async login(username: string, password: string, passwordConfirm?: string): Promise<void> {
+    const body: { username: string; password: string; passwordConfirm?: string } = {
+      username,
+      password,
+    };
     if (passwordConfirm !== undefined) {
       body.passwordConfirm = passwordConfirm;
     }
     await apiClient.post('/api/v1/auth/login', body);
+  },
+
+  async register(username: string, password: string, passwordConfirm: string): Promise<void> {
+    await apiClient.post('/api/v1/auth/register', {
+      username,
+      password,
+      passwordConfirm,
+    });
   },
 
   async changePassword(
@@ -61,5 +89,14 @@ export const authApi = {
 
   async logout(): Promise<void> {
     await apiClient.post('/api/v1/auth/logout');
+  },
+
+  async listUsers(): Promise<UsersListResponse> {
+    const { data } = await apiClient.get<UsersListResponse>('/api/v1/auth/users');
+    return data;
+  },
+
+  async deactivateUser(userId: number): Promise<void> {
+    await apiClient.post(`/api/v1/auth/users/${userId}/deactivate`);
   },
 };

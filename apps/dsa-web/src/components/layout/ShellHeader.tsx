@@ -1,6 +1,7 @@
 import type React from 'react';
-import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeftOpen, User } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { useAuth } from '../../hooks';
 import { ThemeToggle } from '../theme/ThemeToggle';
 
 type ShellHeaderProps = {
@@ -22,6 +23,7 @@ export const ShellHeader: React.FC<ShellHeaderProps> = ({
   onOpenMobileNav,
 }) => {
   const location = useLocation();
+  const { loggedIn, username } = useAuth();
   const current = TITLES[location.pathname] ?? { title: 'Daily Stock Analysis', description: 'Web workspace' };
 
   return (
@@ -50,6 +52,12 @@ export const ShellHeader: React.FC<ShellHeaderProps> = ({
           <p className="truncate text-xs text-secondary-text">{current.description}</p>
         </div>
 
+        {loggedIn && username ? (
+          <div className="flex items-center gap-1.5 rounded-xl border border-border/70 bg-card/70 px-3 py-1.5 text-xs text-secondary-text">
+            <User className="h-3.5 w-3.5" />
+            <span className="font-medium text-foreground">{username}</span>
+          </div>
+        ) : null}
         <ThemeToggle />
       </div>
     </header>

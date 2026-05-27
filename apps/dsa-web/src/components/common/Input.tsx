@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useId, useState } from 'react';
-import { Lock, Key } from 'lucide-react';
+import { Lock, Key, User } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { EyeToggleIcon } from './EyeToggleIcon';
 
@@ -14,7 +14,7 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   /** Enables the built-in password visibility toggle. */
   allowTogglePassword?: boolean;
   /** Controls the leading icon style. */
-  iconType?: 'password' | 'key' | 'none';
+  iconType?: 'password' | 'key' | 'user' | 'none';
   /** Allows external visibility state control. */
   passwordVisible?: boolean;
   /** Notifies the parent when visibility changes in controlled mode. */
@@ -63,6 +63,16 @@ export const Input = ({
     if (iconType === 'key') {
       return (
         <Key
+          className={cn(
+            'h-4 w-4',
+            isLoginAppearance ? 'text-[var(--login-input-icon)]' : 'text-muted-text/55'
+          )}
+        />
+      );
+    }
+    if (iconType === 'user') {
+      return (
+        <User
           className={cn(
             'h-4 w-4',
             isLoginAppearance ? 'text-[var(--login-input-icon)]' : 'text-muted-text/55'

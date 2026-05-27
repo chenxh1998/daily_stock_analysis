@@ -112,8 +112,8 @@ class PortfolioService:
         )
         return self._account_to_dict(row)
 
-    def list_accounts(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
-        rows = self.repo.list_accounts(include_inactive=include_inactive)
+    def list_accounts(self, include_inactive: bool = False, owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        rows = self.repo.list_accounts(include_inactive=include_inactive, owner_id=owner_id)
         return [self._account_to_dict(r) for r in rows]
 
     def update_account(

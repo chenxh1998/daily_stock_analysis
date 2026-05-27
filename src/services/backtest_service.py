@@ -222,6 +222,7 @@ class BacktestService:
         page: int = 1,
         analysis_date_from: Optional[date] = None,
         analysis_date_to: Optional[date] = None,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         config = get_config()
         engine_version = str(getattr(config, "backtest_engine_version", "v1"))
@@ -248,6 +249,7 @@ class BacktestService:
             days=None,
             offset=offset,
             limit=limit,
+            user_id=user_id,
         )
         items = [self._result_to_dict(result, stock_name, trend_prediction) for result, stock_name, trend_prediction, _ in rows]
         return {"total": total, "page": page, "limit": limit, "items": items}

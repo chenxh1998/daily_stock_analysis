@@ -66,6 +66,37 @@ if TYPE_CHECKING:
 
 # === 数据模型定义 ===
 
+
+class User(Base):
+    """Multi-user account."""
+
+    __tablename__ = 'users'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), nullable=False, unique=True, index=True)
+    password_hash = Column(String(256), nullable=False)
+    display_name = Column(String(128))
+    is_admin = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def __repr__(self):
+        return f"<User(id={self.id}, username={self.username})>"
+
+
+class UserConfig(Base):
+    """Per-user preferences (stock list, UI settings, etc.)."""
+
+    __tablename__ = 'user_configs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, unique=True, index=True)
+    stock_list = Column(Text)
+    preferences_json = Column(Text)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 class StockDaily(Base):
     """
     股票日线数据模型
@@ -222,6 +253,7 @@ class AnalysisHistory(Base):
 
     # 关联查询链路
     query_id = Column(String(64), index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
 
     # 股票信息
     code = Column(String(10), nullable=False, index=True)
@@ -280,6 +312,8 @@ class BacktestResult(Base):
     __tablename__ = 'backtest_results'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
 
     analysis_history_id = Column(
         Integer,
@@ -349,6 +383,7 @@ class BacktestSummary(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
     scope = Column(String(16), nullable=False, index=True)  # overall/stock
     code = Column(String(16), index=True)
 
@@ -604,6 +639,7 @@ class ConversationMessage(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(String(100), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
     role = Column(String(20), nullable=False)  # user, assistant, system
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.now, index=True)
@@ -631,6 +667,7 @@ class AlertRuleRecord(Base):
     __tablename__ = 'alert_rules'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
     name = Column(String(64), nullable=False)
     target_scope = Column(String(32), nullable=False, default='single_symbol', index=True)
     target = Column(String(64), nullable=False, index=True)
@@ -660,6 +697,7 @@ class AlertTriggerRecord(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     rule_id = Column(Integer, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)
     target = Column(String(64), nullable=False, index=True)
     observed_value = Column(Float)
     threshold = Column(Float)
@@ -865,6 +903,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             cursor = dbapi_connection.cursor()
             try:
                 cursor.execute(f"PRAGMA busy_timeout={int(self._sqlite_busy_timeout_ms)}")
+                cursor.execute("PRAGMA foreign_keys = ON")
                 if self._sqlite_file_db and self._sqlite_wal_enabled:
                     cursor.execute("PRAGMA journal_mode=WAL")
             except Exception as exc:
@@ -1302,7 +1341,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         report_type: str,
         news_content: Optional[str],
         context_snapshot: Optional[Dict[str, Any]] = None,
-        save_snapshot: bool = True
+        save_snapshot: bool = True,
+        user_id: Optional[int] = None,
     ) -> int:
         """
         保存分析结果历史记录
@@ -1321,6 +1361,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 session.add(
                     AnalysisHistory(
                         query_id=query_id,
+                        user_id=user_id,
                         code=result.code,
                         name=result.name,
                         report_type=report_type,
@@ -1354,6 +1395,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         days: int = 30,
         limit: int = 50,
         exclude_query_id: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> List[AnalysisHistory]:
         """
         Query analysis history records.
@@ -1362,6 +1404,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         - If query_id is provided, perform exact lookup and ignore days window.
         - If query_id is not provided, apply days-based time filtering.
         - exclude_query_id: exclude records with this query_id (for history comparison).
+        - user_id: when provided, filters records to the specified user.
         """
         cutoff_date = datetime.now() - timedelta(days=days)
 
@@ -1375,6 +1418,9 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
             if code:
                 conditions.append(AnalysisHistory.code == code)
+
+            if user_id is not None:
+                conditions.append(AnalysisHistory.user_id == user_id)
 
             # exclude_query_id only applies when not doing exact lookup (query_id is None)
             if exclude_query_id and not query_id:
@@ -1395,42 +1441,44 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         offset: int = 0,
-        limit: int = 20
+        limit: int = 20,
+        user_id: Optional[int] = None,
     ) -> Tuple[List[AnalysisHistory], int]:
         """
         分页查询分析历史记录（带总数）
-        
+
         Args:
             code: 股票代码筛选
             start_date: 开始日期（含）
             end_date: 结束日期（含）
             offset: 偏移量（跳过前 N 条）
             limit: 每页数量
-            
+            user_id: 用户 ID 筛选
+
         Returns:
             Tuple[List[AnalysisHistory], int]: (记录列表, 总数)
         """
         from sqlalchemy import func
-        
+
         with self.get_session() as session:
             conditions = []
-            
+
             if code:
                 conditions.append(AnalysisHistory.code == code)
+            if user_id is not None:
+                conditions.append(AnalysisHistory.user_id == user_id)
             if start_date:
-                # created_at >= start_date 00:00:00
                 conditions.append(AnalysisHistory.created_at >= datetime.combine(start_date, datetime.min.time()))
             if end_date:
-                # created_at < end_date+1 00:00:00 (即 <= end_date 23:59:59)
                 conditions.append(AnalysisHistory.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
-            
+
             # 构建 where 子句
             where_clause = and_(*conditions) if conditions else True
-            
+
             # 查询总数
             total_query = select(func.count(AnalysisHistory.id)).where(where_clause)
             total = session.execute(total_query).scalar() or 0
-            
+
             # 查询分页数据
             data_query = (
                 select(AnalysisHistory)
@@ -1440,7 +1488,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 .limit(limit)
             )
             results = session.execute(data_query).scalars().all()
-            
+
             return list(results), total
     
     def get_analysis_history_by_id(self, record_id: int) -> Optional[AnalysisHistory]:
@@ -1995,13 +2043,14 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         digest = hashlib.md5(raw_key.encode("utf-8")).hexdigest()
         return f"no-url:{code}:{digest}"
 
-    def save_conversation_message(self, session_id: str, role: str, content: str) -> None:
+    def save_conversation_message(self, session_id: str, role: str, content: str, user_id: Optional[int] = None) -> None:
         """
         保存 Agent 对话消息
         """
         with self.session_scope() as session:
             msg = ConversationMessage(
                 session_id=session_id,
+                user_id=user_id,
                 role=role,
                 content=content
             )
@@ -2035,6 +2084,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
         limit: int = 50,
         session_prefix: Optional[str] = None,
         extra_session_ids: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         获取聊天会话列表（从 conversation_messages 聚合）
@@ -2046,6 +2096,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 ``"telegram_12345"``).
             extra_session_ids: Optional exact session ids to include in
                 addition to the scoped prefix.
+            user_id: When provided, filter to the specified user's sessions.
 
         Returns:
             按最近活跃时间倒序的会话列表，每条包含 session_id, title, message_count, last_active
@@ -2068,6 +2119,8 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 )
             )
             conditions = []
+            if user_id is not None:
+                conditions.append(ConversationMessage.user_id == user_id)
             if normalized_prefix:
                 conditions.append(ConversationMessage.session_id.startswith(normalized_prefix))
             if exact_ids:
@@ -2108,14 +2161,17 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 })
             return results
 
-    def get_conversation_messages(self, session_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_conversation_messages(self, session_id: str, limit: int = 100, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         获取单个会话的完整消息列表（用于前端恢复历史）
         """
         with self.session_scope() as session:
+            conditions = [ConversationMessage.session_id == session_id]
+            if user_id is not None:
+                conditions.append(ConversationMessage.user_id == user_id)
             stmt = (
                 select(ConversationMessage)
-                .where(ConversationMessage.session_id == session_id)
+                .where(and_(*conditions))
                 .order_by(ConversationMessage.created_at)
                 .limit(limit)
             )
@@ -2130,7 +2186,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 for msg in messages
             ]
 
-    def delete_conversation_session(self, session_id: str) -> int:
+    def delete_conversation_session(self, session_id: str, user_id: Optional[int] = None) -> int:
         """
         删除指定会话的所有消息
 
@@ -2138,10 +2194,11 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             删除的消息数
         """
         with self.session_scope() as session:
+            conditions = [ConversationMessage.session_id == session_id]
+            if user_id is not None:
+                conditions.append(ConversationMessage.user_id == user_id)
             result = session.execute(
-                delete(ConversationMessage).where(
-                    ConversationMessage.session_id == session_id
-                )
+                delete(ConversationMessage).where(and_(*conditions))
             )
             return result.rowcount
 

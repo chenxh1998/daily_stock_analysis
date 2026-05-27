@@ -6,27 +6,33 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from api.deps import get_system_config_service
+from api.deps import get_current_user_id, get_optional_user_id, get_system_config_service
 from src.auth import (
     COOKIE_NAME,
     SESSION_MAX_AGE_HOURS_DEFAULT,
+    authenticate_user,
     change_password,
     check_rate_limit,
     clear_rate_limit,
     create_session,
+    create_user,
+    deactivate_user,
     get_client_ip,
+    get_user_by_id,
     has_stored_password,
     is_auth_enabled,
     is_password_changeable,
     is_password_set,
+    list_users,
     record_login_failure,
     refresh_auth_state,
     rotate_session_secret,
     set_initial_password,
+    update_user_password,
     verify_password,
     verify_stored_password,
     verify_session,
@@ -40,12 +46,23 @@ router = APIRouter()
 
 
 class LoginRequest(BaseModel):
-    """Login request body. For first-time setup use password + password_confirm."""
+    """Login request body. For first-time setup use username + password + password_confirm."""
 
     model_config = {"populate_by_name": True}
 
-    password: str = Field(default="", description="Admin password")
+    username: str = Field(default="", description="Username")
+    password: str = Field(default="", description="Password")
     password_confirm: str | None = Field(default=None, alias="passwordConfirm", description="Confirm (first-time)")
+
+
+class RegisterRequest(BaseModel):
+    """Registration request body."""
+
+    model_config = {"populate_by_name": True}
+
+    username: str = Field(default="", description="Username")
+    password: str = Field(default="", description="Password")
+    password_confirm: str = Field(default="", alias="passwordConfirm", description="Confirm password")
 
 
 class ChangePasswordRequest(BaseModel):
@@ -158,14 +175,25 @@ def _get_auth_status_dict(request: Request | None = None) -> dict:
     """Helper to build consistent auth status response body."""
     auth_enabled = is_auth_enabled()
     logged_in = False
+    user_id = None
+    username = None
+    display_name = None
+    is_admin = False
+
     if auth_enabled and request:
         cookie_val = request.cookies.get(COOKIE_NAME)
-        logged_in = verify_session(cookie_val) if cookie_val else False
+        session_user_id = verify_session(cookie_val) if cookie_val else None
+        if session_user_id is not None:
+            logged_in = True
+            user_id = session_user_id
+            user = get_user_by_id(session_user_id)
+            if user:
+                username = user.username
+                display_name = user.display_name
+                is_admin = user.is_admin
 
-    # setupState determination:
-    # - enabled: auth is active
-    # - password_retained: auth disabled but password exists
-    # - no_password: auth disabled and no password exists
+    has_users = has_stored_password() or (logged_in)
+
     if auth_enabled:
         setup_state = "enabled"
     elif has_stored_password():
@@ -176,6 +204,10 @@ def _get_auth_status_dict(request: Request | None = None) -> dict:
     return {
         "authEnabled": auth_enabled,
         "loggedIn": logged_in,
+        "userId": user_id,
+        "username": username,
+        "displayName": display_name,
+        "isAdmin": is_admin,
         "passwordSet": _password_set_for_response(auth_enabled),
         "passwordChangeable": is_password_changeable() if auth_enabled else False,
         "setupState": setup_state,
@@ -357,16 +389,17 @@ async def auth_update_settings(request: Request, body: AuthSettingsRequest):
 @router.post(
     "/login",
     summary="Login or set initial password",
-    description="Verify password and set session cookie. If password not set yet, accepts password+passwordConfirm.",
+    description="Verify username and password, set session cookie. If no users exist, first-time setup via username+password+passwordConfirm.",
 )
 async def auth_login(request: Request, body: LoginRequest):
-    """Verify password or set initial password, set cookie on success. Returns 401 or 429 on failure."""
+    """Verify credentials or create first admin user, set cookie on success."""
     if not is_auth_enabled():
         return JSONResponse(
             status_code=400,
             content={"error": "auth_disabled", "message": "Authentication is not configured"},
         )
 
+    username = (body.username or "").strip()
     password = (body.password or "").strip()
     if not password:
         return JSONResponse(
@@ -387,31 +420,66 @@ async def auth_login(request: Request, body: LoginRequest):
     password_set = is_password_set()
 
     if not password_set:
-        # First-time setup: require passwordConfirm
+        # First-time setup: create admin user
+        if not username:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "username_required", "message": "请输入用户名"},
+            )
         confirm = (body.password_confirm or "").strip()
         if password != confirm:
             record_login_failure(ip)
             return JSONResponse(
                 status_code=400,
-                content={"error": "password_mismatch", "message": "Passwords do not match"},
-            )
-        err = set_initial_password(password)
-        if err:
-            record_login_failure(ip)
-            return JSONResponse(
-                status_code=400,
-                content={"error": "invalid_password", "message": err},
-            )
-    else:
-        if not verify_password(password):
-            record_login_failure(ip)
-            return JSONResponse(
-                status_code=401,
-                content={"error": "invalid_password", "message": "密码错误"},
+                content={"error": "password_mismatch", "message": "两次输入的密码不一致"},
             )
 
+        # Try DB first, fall back to legacy
+        user, err = create_user(username, password, display_name=username, is_admin=True)
+        if err:
+            if not has_stored_password():
+                # Legacy fallback: use file-based admin password
+                legacy_err = set_initial_password(password)
+                if legacy_err:
+                    record_login_failure(ip)
+                    return JSONResponse(
+                        status_code=400,
+                        content={"error": "invalid_password", "message": legacy_err},
+                    )
+            else:
+                record_login_failure(ip)
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "invalid_password", "message": err},
+                )
+
+        if user:
+            session_user_id = user.id
+        else:
+            # Legacy admin without user row: create session without user_id
+            session_user_id = None
+    else:
+        if not username:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "username_required", "message": "请输入用户名"},
+            )
+
+        user = authenticate_user(username, password)
+        if user is None:
+            # Try legacy admin password
+            if not verify_password(password):
+                record_login_failure(ip)
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "invalid_password", "message": "用户名或密码错误"},
+                )
+            session_user_id = None
+        else:
+            session_user_id = user.id
+
     clear_rate_limit(ip)
-    session_val = create_session()
+    session_val = create_session(session_user_id)
     if not session_val:
         return JSONResponse(
             status_code=500,
@@ -424,12 +492,59 @@ async def auth_login(request: Request, body: LoginRequest):
 
 
 @router.post(
+    "/register",
+    summary="Register new user",
+    description="Register a new user account. Only available when auth is enabled.",
+)
+async def auth_register(request: Request, body: RegisterRequest):
+    """Register a new user."""
+    if not is_auth_enabled():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "auth_disabled", "message": "认证功能未启用"},
+        )
+
+    username = (body.username or "").strip()
+    password = (body.password or "").strip()
+    confirm = (body.password_confirm or "").strip()
+
+    if not username:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "username_required", "message": "请输入用户名"},
+        )
+    if password != confirm:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "password_mismatch", "message": "两次输入的密码不一致"},
+        )
+
+    user, err = create_user(username, password, display_name=username, is_admin=False)
+    if err:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "registration_failed", "message": err},
+        )
+
+    session_val = create_session(user.id)
+    if not session_val:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "internal_error", "message": "Failed to create session"},
+        )
+
+    resp = JSONResponse(content={"ok": True, "userId": user.id, "username": user.username})
+    _set_session_cookie(resp, session_val, request)
+    return resp
+
+
+@router.post(
     "/change-password",
     summary="Change password",
     description="Change password. Requires valid session.",
 )
-async def auth_change_password(body: ChangePasswordRequest):
-    """Change password. Requires login."""
+async def auth_change_password(request: Request, body: ChangePasswordRequest):
+    """Change password. Uses current user from session in multi-user mode."""
     if not is_password_changeable():
         return JSONResponse(
             status_code=400,
@@ -451,7 +566,13 @@ async def auth_change_password(body: ChangePasswordRequest):
             content={"error": "password_mismatch", "message": "两次输入的新密码不一致"},
         )
 
-    err = change_password(current, new_pwd)
+    # Try to get user_id from session for multi-user mode
+    cookie_val = request.cookies.get(COOKIE_NAME)
+    session_user_id = verify_session(cookie_val) if cookie_val else None
+    if session_user_id is not None:
+        err = update_user_password(session_user_id, current, new_pwd)
+    else:
+        err = change_password(current, new_pwd)
     if err:
         return JSONResponse(
             status_code=400,
@@ -475,3 +596,91 @@ async def auth_logout(request: Request):
     resp = Response(status_code=204)
     resp.delete_cookie(key=COOKIE_NAME, path="/")
     return resp
+
+
+@router.get(
+    "/users",
+    summary="List all users (admin only)",
+    description="Returns all active users. Admin only.",
+)
+async def auth_list_users(request: Request):
+    """List all users. Requires admin session."""
+    if not is_auth_enabled():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "auth_disabled", "message": "认证功能未启用"},
+        )
+
+    cookie_val = request.cookies.get(COOKIE_NAME)
+    session_user_id = verify_session(cookie_val) if cookie_val else None
+    if session_user_id is None:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "unauthorized", "message": "Login required"},
+        )
+
+    current_user = get_user_by_id(session_user_id)
+    if current_user is None or not current_user.is_admin:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "forbidden", "message": "Admin only"},
+        )
+
+    users = list_users()
+    return {
+        "users": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "displayName": u.display_name,
+                "isAdmin": u.is_admin,
+                "isActive": u.is_active,
+                "createdAt": u.created_at.isoformat() if u.created_at else None,
+            }
+            for u in users
+        ]
+    }
+
+
+@router.post(
+    "/users/{user_id}/deactivate",
+    summary="Deactivate a user (admin only)",
+    description="Deactivate a user account. Admin only.",
+)
+async def auth_deactivate_user(request: Request, user_id: int):
+    """Deactivate a user. Requires admin session."""
+    if not is_auth_enabled():
+        return JSONResponse(
+            status_code=400,
+            content={"error": "auth_disabled", "message": "认证功能未启用"},
+        )
+
+    cookie_val = request.cookies.get(COOKIE_NAME)
+    session_user_id = verify_session(cookie_val) if cookie_val else None
+    if session_user_id is None:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "unauthorized", "message": "Login required"},
+        )
+
+    current_user = get_user_by_id(session_user_id)
+    if current_user is None or not current_user.is_admin:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "forbidden", "message": "Admin only"},
+        )
+
+    if session_user_id == user_id:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "invalid_request", "message": "不能停用自己的账号"},
+        )
+
+    success = deactivate_user(user_id)
+    if not success:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "message": "用户不存在"},
+        )
+
+    return {"ok": True}

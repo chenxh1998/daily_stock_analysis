@@ -85,10 +85,11 @@ class StockAnalysisPipeline:
         save_context_snapshot: Optional[bool] = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         analysis_skills: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ):
         """
         初始化调度器
-        
+
         Args:
             config: 配置对象（可选，默认使用全局配置）
             max_workers: 最大并发线程数（可选，默认从配置读取）
@@ -98,6 +99,7 @@ class StockAnalysisPipeline:
         self.source_message = source_message
         self.query_id = query_id
         self.query_source = self._resolve_query_source(query_source)
+        self.user_id = user_id
         self.save_context_snapshot = (
             self.config.save_context_snapshot if save_context_snapshot is None else save_context_snapshot
         )
@@ -531,7 +533,8 @@ class StockAnalysisPipeline:
                         report_type=report_type.value,
                         news_content=news_context,
                         context_snapshot=context_snapshot,
-                        save_snapshot=self.save_context_snapshot
+                        save_snapshot=self.save_context_snapshot,
+                        user_id=self.user_id,
                     )
                 except Exception as e:
                     logger.warning(f"{stock_name}({code}) 保存分析历史失败: {e}")
@@ -939,7 +942,8 @@ class StockAnalysisPipeline:
                         report_type=report_type.value,
                         news_content=None,
                         context_snapshot=initial_context,
-                        save_snapshot=self.save_context_snapshot
+                        save_snapshot=self.save_context_snapshot,
+                        user_id=self.user_id,
                     )
                 except Exception as e:
                     logger.warning(f"[{code}] 保存 Agent 分析历史失败: {e}")

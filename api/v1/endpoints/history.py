@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Body
 
-from api.deps import get_database_manager
+from api.deps import get_database_manager, get_optional_user_id
 from api.v1.schemas.history import (
     HistoryListResponse,
     HistoryItem,
@@ -66,7 +66,8 @@ def get_history_list(
     end_date: Optional[str] = Query(None, description="结束日期 (YYYY-MM-DD)"),
     page: int = Query(1, ge=1, description="页码（从 1 开始）"),
     limit: int = Query(20, ge=1, le=100, description="每页数量"),
-    db_manager: DatabaseManager = Depends(get_database_manager)
+    db_manager: DatabaseManager = Depends(get_database_manager),
+    user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> HistoryListResponse:
     """
     获取历史分析列表
@@ -93,7 +94,8 @@ def get_history_list(
             start_date=start_date,
             end_date=end_date,
             page=page,
-            limit=limit
+            limit=limit,
+            user_id=user_id,
         )
         
         # 转换为响应模型

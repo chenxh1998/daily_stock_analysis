@@ -69,18 +69,20 @@ class HistoryService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         page: int = 1,
-        limit: int = 20
+        limit: int = 20,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Get history analysis list.
-        
+
         Args:
             stock_code: Stock code filter
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
             page: Page number
             limit: Items per page
-            
+            user_id: User ID filter
+
         Returns:
             Dictionary containing total count and items
         """
@@ -110,7 +112,8 @@ class HistoryService:
                 start_date=start_dt,
                 end_date=end_dt,
                 offset=offset,
-                limit=limit
+                limit=limit,
+                user_id=user_id,
             )
             
             # Convert to response format

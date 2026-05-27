@@ -70,8 +70,11 @@ class AlertRepository:
         source: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        user_id: Optional[int] = None,
     ) -> Tuple[List[AlertRuleRecord], int]:
         conditions = []
+        if user_id is not None:
+            conditions.append(AlertRuleRecord.user_id == user_id)
         if enabled is not None:
             conditions.append(AlertRuleRecord.enabled.is_(enabled))
         if alert_type:

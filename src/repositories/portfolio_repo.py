@@ -82,11 +82,13 @@ class PortfolioRepository:
                 include_inactive=include_inactive,
             )
 
-    def list_accounts(self, include_inactive: bool = False) -> List[PortfolioAccount]:
+    def list_accounts(self, include_inactive: bool = False, owner_id: Optional[str] = None) -> List[PortfolioAccount]:
         with self.db.get_session() as session:
             query = select(PortfolioAccount)
             if not include_inactive:
                 query = query.where(PortfolioAccount.is_active.is_(True))
+            if owner_id is not None:
+                query = query.where(PortfolioAccount.owner_id == owner_id)
             rows = session.execute(query.order_by(PortfolioAccount.id.asc())).scalars().all()
             return list(rows)
 

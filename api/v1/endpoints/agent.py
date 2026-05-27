@@ -9,10 +9,11 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from api.deps import get_optional_user_id
 from src.config import get_config
 from src.services.agent_model_service import list_agent_model_deployments
 
@@ -205,7 +206,11 @@ class SessionMessagesResponse(BaseModel):
 
 
 @router.get("/chat/sessions", response_model=SessionsResponse)
-async def list_chat_sessions(limit: int = 50, user_id: Optional[str] = None):
+async def list_chat_sessions(
+    limit: int = 50,
+    user_id: Optional[str] = None,
+    auth_user_id: Optional[int] = Depends(get_optional_user_id),
+):
     """获取聊天会话列表
 
     Args:
@@ -221,23 +226,31 @@ async def list_chat_sessions(limit: int = 50, user_id: Optional[str] = None):
         limit=limit,
         session_prefix=user_id,
         extra_session_ids=[user_id] if user_id else None,
+        user_id=auth_user_id,
     )
     return SessionsResponse(sessions=sessions)
 
 
 @router.get("/chat/sessions/{session_id}", response_model=SessionMessagesResponse)
-async def get_chat_session_messages(session_id: str, limit: int = 100):
+async def get_chat_session_messages(
+    session_id: str,
+    limit: int = 100,
+    auth_user_id: Optional[int] = Depends(get_optional_user_id),
+):
     """获取单个会话的完整消息"""
     from src.storage import get_db
-    messages = get_db().get_conversation_messages(session_id, limit=limit)
+    messages = get_db().get_conversation_messages(session_id, limit=limit, user_id=auth_user_id)
     return SessionMessagesResponse(session_id=session_id, messages=messages)
 
 
 @router.delete("/chat/sessions/{session_id}")
-async def delete_chat_session(session_id: str):
+async def delete_chat_session(
+    session_id: str,
+    auth_user_id: Optional[int] = Depends(get_optional_user_id),
+):
     """删除指定会话"""
     from src.storage import get_db
-    count = get_db().delete_conversation_session(session_id)
+    count = get_db().delete_conversation_session(session_id, user_id=auth_user_id)
     return {"deleted": count}
 
 

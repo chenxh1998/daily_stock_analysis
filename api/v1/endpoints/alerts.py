@@ -6,8 +6,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from api.deps import get_optional_user_id
 from api.v1.schemas.alerts import (
     AlertDeleteResponse,
     AlertNotificationListResponse,
@@ -59,10 +60,13 @@ def _internal_error(message: str, exc: Exception) -> HTTPException:
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     summary="Create alert rule",
 )
-def create_rule(request: AlertRuleCreateRequest) -> AlertRuleItem:
+def create_rule(
+    request: AlertRuleCreateRequest,
+    user_id: Optional[int] = Depends(get_optional_user_id),
+) -> AlertRuleItem:
     service = AlertService()
     try:
-        return AlertRuleItem(**service.create_rule(request.model_dump()))
+        return AlertRuleItem(**service.create_rule(request.model_dump(), user_id=user_id))
     except UnsupportedAlertTypeError as exc:
         raise _bad_request(exc, error=exc.error_code)
     except AlertServiceError as exc:
@@ -85,6 +89,7 @@ def list_rules(
     source: Optional[str] = Query(None, description="Optional source filter"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> AlertRuleListResponse:
     service = AlertService()
     try:
@@ -97,6 +102,7 @@ def list_rules(
                 source=source,
                 page=page,
                 page_size=page_size,
+                user_id=user_id,
             )
         )
     except Exception as exc:

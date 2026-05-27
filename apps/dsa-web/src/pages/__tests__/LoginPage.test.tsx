@@ -38,9 +38,10 @@ describe('LoginPage', () => {
 
     render(<LoginPage />);
 
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('管理员密码'), { target: { value: 'passwd6' } });
     fireEvent.change(screen.getByLabelText('确认密码'), { target: { value: 'passwd7' } });
-    fireEvent.click(screen.getByRole('button', { name: '完成设置并登录' }));
+    fireEvent.click(screen.getByRole('button', { name: '创建管理员账户并登录' }));
 
     expect(await screen.findByText('两次输入的密码不一致')).toBeInTheDocument();
     expect(login).not.toHaveBeenCalled();
@@ -57,6 +58,7 @@ describe('LoginPage', () => {
 
     render(<LoginPage />);
 
+    fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'admin' } });
     fireEvent.change(screen.getByLabelText('登录密码'), { target: { value: 'passwd6' } });
     fireEvent.click(screen.getByRole('button', { name: '授权进入工作台' }));
 

@@ -72,7 +72,8 @@ class TaskInfo:
     original_query: Optional[str] = None
     selection_source: Optional[str] = None
     skills: Optional[List[str]] = None
-    
+    user_id: Optional[int] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert task info into an API-friendly dictionary."""
         return {
@@ -110,6 +111,7 @@ class TaskInfo:
             original_query=self.original_query,
             selection_source=self.selection_source,
             skills=list(self.skills) if self.skills is not None else None,
+            user_id=self.user_id,
         )
 
 
@@ -349,6 +351,7 @@ class AnalysisTaskQueue:
         force_refresh: bool = False,
         notify: bool = True,
         skills: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ) -> Tuple[List[TaskInfo], List[DuplicateTaskError]]:
         """
         Submit analysis tasks in batch.
@@ -387,6 +390,7 @@ class AnalysisTaskQueue:
                     original_query=original_query,
                     selection_source=selection_source,
                     skills=task_skills,
+                    user_id=user_id,
                 )
                 self._tasks[task_id] = task_info
                 self._analyzing_stocks[dedupe_key] = task_id
@@ -400,6 +404,7 @@ class AnalysisTaskQueue:
                         force_refresh,
                         notify,
                         task_skills,
+                        user_id,
                     )
                 except Exception:
                     # Roll back the current batch to avoid partial submission.
@@ -583,6 +588,7 @@ class AnalysisTaskQueue:
         force_refresh: bool,
         notify: bool = True,
         skills: Optional[List[str]] = None,
+        user_id: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         执行分析任务（在线程池中运行）
@@ -626,6 +632,7 @@ class AnalysisTaskQueue:
                 send_notification=notify,
                 progress_callback=_on_progress,
                 skills=skills,
+                user_id=user_id,
             )
             
             if result:

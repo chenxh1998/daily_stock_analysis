@@ -101,8 +101,10 @@ class AlertService:
         self.db = db_manager or DatabaseManager.get_instance()
         self.repo = AlertRepository(self.db)
 
-    def create_rule(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def create_rule(self, payload: Dict[str, Any], user_id: Optional[int] = None) -> Dict[str, Any]:
         fields = self._normalize_rule_payload(payload)
+        if user_id is not None:
+            fields["user_id"] = user_id
         return self._serialize_rule(self.repo.create_rule(fields))
 
     def get_rule(self, rule_id: int) -> Dict[str, Any]:
@@ -146,6 +148,7 @@ class AlertService:
         source: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         rows, total = self.repo.list_rules(
             enabled=enabled,
@@ -155,6 +158,7 @@ class AlertService:
             source=source,
             page=page,
             page_size=page_size,
+            user_id=user_id,
         )
         return {
             "items": [self._serialize_rule(row) for row in rows],

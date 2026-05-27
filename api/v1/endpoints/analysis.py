@@ -28,7 +28,7 @@ from typing import Optional, Union, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends, Query, Body
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api.deps import get_config_dep
+from api.deps import get_config_dep, get_optional_user_id
 from api.v1.schemas.analysis import (
     AnalyzeRequest,
     AnalysisResultResponse,
@@ -212,7 +212,8 @@ def _resolve_and_normalize_input(raw_value: str) -> str:
 )
 def trigger_analysis(
         request: AnalyzeRequest,
-        config: Config = Depends(get_config_dep)
+        config: Config = Depends(get_config_dep),
+        user_id: Optional[int] = Depends(get_optional_user_id),
 ) -> Union[AnalysisResultResponse, JSONResponse]:
     """
     触发股票分析
@@ -299,15 +300,16 @@ def trigger_analysis(
                     "message": "同步模式仅支持单只股票分析，请使用 async_mode=true 进行批量分析"
                 }
             )
-        return _handle_sync_analysis(stock_codes[0], request)
+        return _handle_sync_analysis(stock_codes[0], request, user_id=user_id)
 
     # Async mode submits one task per stock.
-    return _handle_async_analysis_batch(stock_codes, request)
+    return _handle_async_analysis_batch(stock_codes, request, user_id=user_id)
 
 
 def _handle_async_analysis_batch(
     stock_codes: list,
-    request: AnalyzeRequest
+    request: AnalyzeRequest,
+    user_id: Optional[int] = None,
 ) -> JSONResponse:
     """
     Handle asynchronous analysis requests, including batch submission.
@@ -337,6 +339,8 @@ def _handle_async_analysis_batch(
     )
     if skills is not None:
         submit_kwargs["skills"] = skills
+    if user_id is not None:
+        submit_kwargs["user_id"] = user_id
 
     accepted_tasks, duplicate_errors = task_queue.submit_tasks_batch(**submit_kwargs)
 
@@ -398,7 +402,8 @@ def _handle_async_analysis_batch(
 
 def _handle_sync_analysis(
     stock_code: str,
-    request: AnalyzeRequest
+    request: AnalyzeRequest,
+    user_id: Optional[int] = None,
 ) -> AnalysisResultResponse:
     """
     处理同步分析请求
@@ -419,6 +424,7 @@ def _handle_sync_analysis(
             query_id=query_id,
             send_notification=getattr(request, "notify", True),
             skills=getattr(request, "skills", None),
+            user_id=user_id,
         )
 
         if result is None:
@@ -436,6 +442,7 @@ def _handle_sync_analysis(
         context_snapshot, fundamental_snapshot = _load_sync_fundamental_sources(
             query_id=query_id,
             stock_code=result.get("stock_code", stock_code),
+            user_id=user_id,
         )
         report = _build_analysis_report(
             report_data,
@@ -753,7 +760,10 @@ def _build_task_analysis_result(task: Any) -> AnalysisResultResponse:
     summary="查询分析任务状态",
     description="根据 task_id 查询单个任务的状态"
 )
-def get_analysis_status(task_id: str) -> TaskStatus:
+def get_analysis_status(
+    task_id: str,
+    user_id: Optional[int] = Depends(get_optional_user_id),
+) -> TaskStatus:
     """
     查询分析任务状态
     
@@ -807,7 +817,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
     try:
         from src.storage import DatabaseManager
         db = DatabaseManager.get_instance()
-        records = db.get_analysis_history(query_id=task_id, limit=1)
+        records = db.get_analysis_history(query_id=task_id, limit=1, user_id=user_id)
 
         if records:
             record = records[0]
@@ -929,6 +939,7 @@ def get_analysis_status(task_id: str) -> TaskStatus:
 def _load_sync_fundamental_sources(
     query_id: str,
     stock_code: str,
+    user_id: Optional[int] = None,
 ) -> tuple[Optional[Any], Optional[Dict[str, Any]]]:
     """
     Load context_snapshot and fallback fundamental snapshot for sync analyze response.
@@ -937,7 +948,7 @@ def _load_sync_fundamental_sources(
         from src.storage import DatabaseManager
 
         db = DatabaseManager.get_instance()
-        records = db.get_analysis_history(query_id=query_id, code=stock_code, limit=1)
+        records = db.get_analysis_history(query_id=query_id, code=stock_code, limit=1, user_id=user_id)
         context_snapshot = None
         if records:
             context_snapshot = parse_json_field(getattr(records[0], "context_snapshot", None))
